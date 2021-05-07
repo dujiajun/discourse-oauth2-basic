@@ -69,6 +69,17 @@ describe OAuth2BasicAuthenticator do
       expect(result.email_valid).to eq(true)
     end
 
+    it 'handles true/false strings from identity provider' do
+      SiteSetting.oauth2_email_verified = false
+      authenticator.stubs(:fetch_user_details).returns(email: user.email, email_verified: 'true')
+      result = authenticator.after_authenticate(auth)
+      expect(result.email_valid).to eq(true)
+
+      authenticator.stubs(:fetch_user_details).returns(email: user.email, email_verified: 'false')
+      result = authenticator.after_authenticate(auth)
+      expect(result.email_valid).to eq(false)
+    end
+
     context "fetch_user_details" do
       before(:each) do
         SiteSetting.oauth2_fetch_user_details = true
@@ -175,6 +186,38 @@ describe OAuth2BasicAuthenticator do
     result = authenticator.json_walk({}, JSON.parse(json_string), :email)
 
     expect(result).to eq "test@example.com"
+  end
+
+  it 'allows keys containing dots, if wrapped in quotes' do
+    authenticator = OAuth2BasicAuthenticator.new
+    json_string = '{"www.example.com/uid": "myuid"}'
+    SiteSetting.oauth2_json_user_id_path = '"www.example.com/uid"'
+    result = authenticator.json_walk({}, JSON.parse(json_string), :user_id)
+
+    expect(result).to eq "myuid"
+  end
+
+  it 'allows keys containing dots, if escaped' do
+    authenticator = OAuth2BasicAuthenticator.new
+    json_string = '{"www.example.com/uid": "myuid"}'
+    SiteSetting.oauth2_json_user_id_path = 'www\.example\.com/uid'
+    result = authenticator.json_walk({}, JSON.parse(json_string), :user_id)
+
+    expect(result).to eq "myuid"
+  end
+
+  it 'allows keys containing literal backslashes, if escaped' do
+    authenticator = OAuth2BasicAuthenticator.new
+    # This 'single quoted heredoc' syntax means we don't have to escape backslashes in Ruby
+    # What you see is exactly what the user would enter in the site settings
+    json_string = <<~'_'.chomp
+      {"www.example.com/uid\\": "myuid"}
+    _
+    SiteSetting.oauth2_json_user_id_path = <<~'_'.chomp
+      www\.example\.com/uid\\
+    _
+    result = authenticator.json_walk({}, JSON.parse(json_string), :user_id)
+    expect(result).to eq "myuid"
   end
 
   it 'can walk json that contains an array' do

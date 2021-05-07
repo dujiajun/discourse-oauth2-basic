@@ -5,6 +5,7 @@ login:
   oauth2_client_id: ''
   oauth2_client_secret: ''
   oauth2_authorize_url: ''
+  oauth2_authorize_signup_url: ''
   oauth2_token_url: ''
   oauth2_token_url_method:
     default: 'POST'
@@ -46,3 +47,6 @@ login:
     client: true
   oauth2_allow_association_change:
     default: false
+  oauth2_disable_csrf:
+    default: false
+    hidden: true

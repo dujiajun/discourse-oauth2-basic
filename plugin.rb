@@ -46,30 +46,28 @@ class ::OmniAuth::Strategies::Oauth2Basic < ::OmniAuth::Strategies::OAuth2
   end
 end
 
-if Gem::Version.new(Faraday::VERSION) > Gem::Version.new('1.0')
-  require 'faraday/logging/formatter'
-  class OAuth2FaradayFormatter < Faraday::Logging::Formatter
-    def request(env)
-      warn <<~LOG
-        OAuth2 Debugging: request #{env.method.upcase} #{env.url.to_s}
+require 'faraday/logging/formatter'
+class OAuth2FaradayFormatter < Faraday::Logging::Formatter
+  def request(env)
+    warn <<~LOG
+      OAuth2 Debugging: request #{env.method.upcase} #{env.url.to_s}
 
-        Headers: #{env.request_headers}
+      Headers: #{env.request_headers}
 
-        Body: #{env[:body]}
-      LOG
-    end
+      Body: #{env[:body]}
+    LOG
+  end
 
-    def response(env)
-      warn <<~LOG
-        OAuth2 Debugging: response status #{env.status}
+  def response(env)
+    warn <<~LOG
+      OAuth2 Debugging: response status #{env.status}
 
-        From #{env.method.upcase} #{env.url.to_s}
+      From #{env.method.upcase} #{env.url.to_s}
 
-        Headers: #{env.response_headers}
+      Headers: #{env.response_headers}
 
-        Body: #{env[:body]}
-      LOG
-    end
+      Body: #{env[:body]}
+    LOG
   end
 end
 
@@ -93,13 +91,18 @@ class ::OAuth2BasicAuthenticator < Auth::ManagedAuthenticator
                         opts = env['omniauth.strategy'].options
                         opts[:client_id] = SiteSetting.oauth2_client_id
                         opts[:client_secret] = SiteSetting.oauth2_client_secret
-                        opts[:provider_ignores_state] = false
+                        opts[:provider_ignores_state] = SiteSetting.oauth2_disable_csrf
                         opts[:client_options] = {
                           authorize_url: SiteSetting.oauth2_authorize_url,
                           token_url: SiteSetting.oauth2_token_url,
                           token_method: SiteSetting.oauth2_token_url_method.downcase.to_sym
                         }
                         opts[:authorize_options] = SiteSetting.oauth2_authorize_options.split("|").map(&:to_sym)
+
+                        if SiteSetting.oauth2_authorize_signup_url.present? &&
+                            ActionDispatch::Request.new(env).params["signup"].present?
+                          opts[:client_options][:authorize_url] = SiteSetting.oauth2_authorize_signup_url
+                        end
 
                         if SiteSetting.oauth2_send_auth_header? && SiteSetting.oauth2_send_auth_body?
                           # For maximum compatibility we include both header and body auth by default
@@ -166,10 +169,32 @@ class ::OAuth2BasicAuthenticator < Auth::ManagedAuthenticator
     if path.present?
       #this.[].that is the same as this.that, allows for both this[0].that and this.[0].that path styles
       path = path.gsub(".[].", ".").gsub(".[", "[")
-      segments = path.split('.')
+      segments = parse_segments(path)
       val = walk_path(user_json, segments)
       result[prop] = val if val.present?
     end
+  end
+
+  def parse_segments(path)
+    segments = [+""]
+    quoted = false
+    escaped = false
+
+    path.split("").each do |char|
+      next_char_escaped = false
+      if !escaped && (char == '"')
+        quoted = !quoted
+      elsif !escaped && !quoted && (char == '.')
+        segments.append +""
+      elsif !escaped && (char == '\\')
+        next_char_escaped = true
+      else
+        segments.last << char
+      end
+      escaped = next_char_escaped
+    end
+
+    segments
   end
 
   def log(info)
@@ -212,8 +237,11 @@ class ::OAuth2BasicAuthenticator < Auth::ManagedAuthenticator
   end
 
   def primary_email_verified?(auth)
-    auth['info']['email_verified'] ||
-    SiteSetting.oauth2_email_verified
+    return true if SiteSetting.oauth2_email_verified
+    verified = auth['info']['email_verified']
+    verified = true if verified == "true"
+    verified = false if verified == "false"
+    verified
   end
 
   def always_update_user_email?
@@ -249,15 +277,6 @@ class ::OAuth2BasicAuthenticator < Auth::ManagedAuthenticator
 end
 
 auth_provider title_setting: "oauth2_button_title",
-              authenticator: OAuth2BasicAuthenticator.new,
-              message: "OAuth2"
-
-register_css <<CSS
-
-  button.btn-social.oauth2_basic {
-    background-color: #6d6d6d;
-  }
-
-CSS
+              authenticator: OAuth2BasicAuthenticator.new
 
 load File.expand_path("../lib/validators/oauth2_basic/oauth2_fetch_user_details_validator.rb", __FILE__)
